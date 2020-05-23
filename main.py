@@ -19,7 +19,6 @@
  WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 """
 
-
 import os
 import sys
 import time
@@ -34,9 +33,9 @@ from argparse import ArgumentParser
 from inference import Network
 
 # MQTT server environment variables
-HOSTNAME = socket.gethostname()
-IPADDRESS = socket.gethostbyname(HOSTNAME)
-MQTT_HOST = IPADDRESS
+# HOSTNAME = socket.gethostname()
+# IPADDRESS = socket.gethostbyname(HOSTNAME)
+# MQTT_HOST = IPADDRESS
 MQTT_PORT = 3001
 MQTT_KEEPALIVE_INTERVAL = 60
 
@@ -48,21 +47,36 @@ def build_argparser():
     :return: command line arguments
     """
     parser = ArgumentParser()
-    parser.add_argument("-m", "--model", required=True, type=str,
+    parser.add_argument("-m",
+                        "--model",
+                        required=True,
+                        type=str,
                         help="Path to an xml file with a trained model.")
-    parser.add_argument("-i", "--input", required=True, type=str,
+    parser.add_argument("-i",
+                        "--input",
+                        required=True,
+                        type=str,
                         help="Path to image or video file")
-    parser.add_argument("-l", "--cpu_extension", required=False, type=str,
+    parser.add_argument("-l",
+                        "--cpu_extension",
+                        required=False,
+                        type=str,
                         default=None,
                         help="MKLDNN (CPU)-targeted custom layers."
-                             "Absolute path to a shared library with the"
-                             "kernels impl.")
-    parser.add_argument("-d", "--device", type=str, default="CPU",
+                        "Absolute path to a shared library with the"
+                        "kernels impl.")
+    parser.add_argument("-d",
+                        "--device",
+                        type=str,
+                        default="CPU",
                         help="Specify the target device to infer on: "
-                             "CPU, GPU, FPGA or MYRIAD is acceptable. Sample "
-                             "will look for a suitable plugin for device "
-                             "specified (CPU by default)")
-    parser.add_argument("-pt", "--prob_threshold", type=float, default=0.5,
+                        "CPU, GPU, FPGA or MYRIAD is acceptable. Sample "
+                        "will look for a suitable plugin for device "
+                        "specified (CPU by default)")
+    parser.add_argument("-pt",
+                        "--prob_threshold",
+                        type=float,
+                        default=0.5,
                         help="Probability threshold for detections filtering"
                         "(0.5 by default)")
     return parser
@@ -90,31 +104,34 @@ def infer_on_stream(args, client):
     prob_threshold = args.prob_threshold
 
     ### TODO: Load the model through `infer_network` ###
+    infer_network.load_model(model_xml=args.model,
+                             cpu_ext=args.cpu_extension,
+                             device=args.device)
 
     ### TODO: Handle the input stream ###
 
     ### TODO: Loop until stream is over ###
 
-        ### TODO: Read from the video capture ###
+    ### TODO: Read from the video capture ###
 
-        ### TODO: Pre-process the image as needed ###
+    ### TODO: Pre-process the image as needed ###
 
-        ### TODO: Start asynchronous inference for specified request ###
+    ### TODO: Start asynchronous inference for specified request ###
 
-        ### TODO: Wait for the result ###
+    ### TODO: Wait for the result ###
 
-            ### TODO: Get the results of the inference request ###
+    ### TODO: Get the results of the inference request ###
 
-            ### TODO: Extract any desired stats from the results ###
+    ### TODO: Extract any desired stats from the results ###
 
-            ### TODO: Calculate and send relevant information on ###
-            ### current_count, total_count and duration to the MQTT server ###
-            ### Topic "person": keys of "count" and "total" ###
-            ### Topic "person/duration": key of "duration" ###
+    ### TODO: Calculate and send relevant information on ###
+    ### current_count, total_count and duration to the MQTT server ###
+    ### Topic "person": keys of "count" and "total" ###
+    ### Topic "person/duration": key of "duration" ###
 
-        ### TODO: Send the frame to the FFMPEG server ###
+    ### TODO: Send the frame to the FFMPEG server ###
 
-        ### TODO: Write an output image if `single_image_mode` ###
+    ### TODO: Write an output image if `single_image_mode` ###
 
 
 def main():

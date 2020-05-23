@@ -33,16 +33,32 @@ class Network:
     Load and configure inference plugins for the specified target devices 
     and performs synchronous and asynchronous modes for the specified infer requests.
     """
-
     def __init__(self):
         ### TODO: Initialize any class variables desired ###
+        test = "string"
+        print(test)
 
-    def load_model(self):
-        ### TODO: Load the model ###
-        ### TODO: Check for supported layers ###
-        ### TODO: Add any necessary extensions ###
-        ### TODO: Return the loaded inference plugin ###
+    def load_model(self, model_xml, cpu_ext, device):
+        print("Loading IR model into Inference Engine...")
+        plugin = IECore()
+        model_bin = os.path.splitext(model_xml)[0] + ".bin"
+
+        network = IENetwork(model=model_xml, weights=model_bin)
+        if cpu_ext is not None:
+            plugin.add_extension(cpu_ext, device)
+        layers_map = plugin.query_network(network=network, device_name=device)
+        layers = network.layers.keys()
+        unsupported_layers = [
+            layer for layer in layers_map if layer not in layers
+        ]
+        if len(unsupported_layers) != 0:
+            print("Found unsupported layers: {}".format(unsupported_layers))
+            print("Please check the extension for availability.")
+            exit(1)
+
+        plugin.load_network(network, device)
         ### Note: You may need to update the function parameters. ###
+        print("IR model succesfully loaded into Inference Engine.")
         return
 
     def get_input_shape(self):
