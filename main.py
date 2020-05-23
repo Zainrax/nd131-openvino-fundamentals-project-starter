@@ -107,9 +107,15 @@ def infer_on_stream(args, client):
     infer_network.load_model(model_xml=args.model,
                              cpu_ext=args.cpu_extension,
                              device=args.device)
-
-    shape = infer_network.get_input_shape()
-    result = infer_network.exec_net(0)
+    frames = [0, 1, 2, 3]
+    input_shape = infer_network.get_input_shape()
+    width = input_shape[2]
+    height = input_shape[3]
+    for frame in frames:
+        infer_network.exec_net(0, frame)
+        status = infer_network.wait()
+        result = infer_network.get_output()
+        print(result)
     ### TODO: Handle the input stream ###
 
     ### TODO: Loop until stream is over ###
