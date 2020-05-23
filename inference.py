@@ -24,6 +24,7 @@
 
 import os
 import sys
+import time
 import logging as log
 from openvino.inference_engine import IENetwork, IECore
 
@@ -36,18 +37,23 @@ class Network:
     def __init__(self):
         ### TODO: Initialize any class variables desired ###
         test = "string"
+        self.plugin = None
+        self.plugin_net = None
+        self.network = None
+        self.input_blob = None
         print(test)
 
     def load_model(self, model_xml, cpu_ext, device):
         print("Loading IR model into Inference Engine...")
-        plugin = IECore()
+        self.plugin = IECore()
         model_bin = os.path.splitext(model_xml)[0] + ".bin"
 
-        network = IENetwork(model=model_xml, weights=model_bin)
+        self.network = IENetwork(model=model_xml, weights=model_bin)
         if cpu_ext is not None:
-            plugin.add_extension(cpu_ext, device)
-        layers_map = plugin.query_network(network=network, device_name=device)
-        layers = network.layers.keys()
+            self.plugin.add_extension(cpu_ext, device)
+        layers_map = self.plugin.query_network(network=self.network,
+                                               device_name=device)
+        layers = self.network.layers.keys()
         unsupported_layers = [
             layer for layer in layers_map if layer not in layers
         ]
@@ -56,20 +62,37 @@ class Network:
             print("Please check the extension for availability.")
             exit(1)
 
-        plugin.load_network(network, device)
+        self.plugin_net = self.plugin.load_network(self.network, device)
         ### Note: You may need to update the function parameters. ###
         print("IR model succesfully loaded into Inference Engine.")
         return
 
     def get_input_shape(self):
         ### TODO: Return the shape of the input layer ###
-        return
+        if self.network is not None:
+            self.input_blob = next(iter(self.network.inputs))
+            input_shape = self.network.inputs[self.input_blob].shape
+            return input_shape
+        else:
+            print("Network has not been defined")
+            exit(1)
 
-    def exec_net(self):
+    def exec_net(self, frame):
         ### TODO: Start an asynchronous request ###
+        if self.input_blob is None:
+            print("Unable to make request as input not found.")
+            exit(1)
+        self.plugin_net.start_async(request_id=0,
+                                    inputs={self.input_blob: frame})
+        while True:
+            status = self.plugin_net.requests[0].wait(-1)
+            if status == 0:
+                break
+            else:
+                time.sleep(1)
         ### TODO: Return any necessary information ###
         ### Note: You may need to update the function parameters. ###
-        return
+        return self.plugin_net
 
     def wait(self):
         ### TODO: Wait for the request to be complete. ###

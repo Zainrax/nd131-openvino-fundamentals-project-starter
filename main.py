@@ -108,6 +108,8 @@ def infer_on_stream(args, client):
                              cpu_ext=args.cpu_extension,
                              device=args.device)
 
+    shape = infer_network.get_input_shape()
+    result = infer_network.exec_net(0)
     ### TODO: Handle the input stream ###
 
     ### TODO: Loop until stream is over ###
