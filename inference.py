@@ -35,7 +35,6 @@ class Network:
     and performs synchronous and asynchronous modes for the specified infer requests.
     """
     def __init__(self):
-        ### TODO: Initialize any class variables desired ###
         self.plugin = None
         self.plugin_net = None
         self.network = None
@@ -62,13 +61,14 @@ class Network:
             print("Please check the extension for availability.")
             exit(1)
 
-        self.plugin_net = self.plugin.load_network(self.network, device)
+        self.plugin_net = self.plugin.load_network(self.network,
+                                                   device,
+                                                   num_requests=1000)
         ### Note: You may need to update the function parameters. ###
         print("IR model succesfully loaded into Inference Engine.")
         return
 
     def get_input_shape(self):
-        ### TODO: Return the shape of the input layer ###
         if self.network is not None:
             self.input_blob = next(iter(self.network.inputs))
             input_shape = self.network.inputs[self.input_blob].shape
@@ -78,26 +78,21 @@ class Network:
             exit(1)
 
     def exec_net(self, request_id, frame):
-        ### TODO: Start an asynchronous request ###
         if self.input_blob is None:
             print("Unable to make request as input not found.")
             exit(1)
         self.infer_request_handle = self.plugin_net.start_async(
             request_id, inputs={self.input_blob: frame})
-        ### TODO: Return any necessary information ###
         ### Note: You may need to update the function parameters. ###
         return
 
     def wait(self):
-        ### TODO: Wait for the request to be complete. ###
         infer_status = self.infer_request_handle.wait()
 
-        ### TODO: Return any necessary information ###
         ### Note: You may need to update the function parameters. ###
         return infer_status
 
     def get_output(self):
-        ### TODO: Extract and return the output results
         result = self.infer_request_handle.outputs.values()
         ### Note: You may need to update the function parameters. ###
         return result

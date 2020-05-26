@@ -67,6 +67,7 @@ class Stats extends React.Component {
   }
 
   calculateDuration( input ) {
+    print("test")
     const newDuration = this.state.durations;
     newDuration.push( input );
     const newAverage = this.state.durations.reduce( ( a, b ) => {

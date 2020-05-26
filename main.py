@@ -22,6 +22,7 @@
 import os
 import sys
 import time
+import math
 import socket
 import json
 import cv2
@@ -56,8 +57,25 @@ labels = ("person", "bicycle", "car", "motorbike", "aeroplane", "bus", "train",
           "refrigerator", "book", "clock", "vase", "scissors", "teddy bear",
           "hair drier", "toothbrush")
 
+anchors = [
+    10, 13, 16, 30, 33, 23, 30, 61, 62, 45, 59, 119, 116, 90, 156, 198, 373,
+    326
+]
 classes = 80
 coords = 4
+
+
+class DetectionObservation():
+    time_found = 0.0
+    last_updated = 0.0
+
+    def __init__(self, x, y, h, w, class_id, confidence, w_scale, h_scale):
+        self.xmin = int((x - w / 2) * w_scale)
+        self.ymin = int((y - h / 2) * h_scale)
+        self.xmax = int(self.xmin + w * w_scale)
+        self.ymax = int(self.ymin + h * h_scale)
+        self.confidence = confidence
+        self.class_id = class_id
 
 
 def EntryIndex(side, lcoords, lclasses, location, entry):
@@ -88,36 +106,48 @@ def IntersectionOverUnion(box_1, box_2):
     return retval
 
 
-class DetectionObservation():
-    def __init__(self, x, y, h, w, class_id, confidence, h_scale, w_scale):
-        self.xmin = int((x - w / 2) * w_scale)
-        self.ymin = int((y - h / 2) * h_scale)
-        self.xmax = int(self.xmin + w * w_scale)
-        self.ymax = int(self.ymin + h * h_scale)
-        self.confidence = confidence
-        self.class_id = class_id
-
-
-def parseYoloV3(out, threshold):
+def parseYoloV3(out, threshold, cap_h, cap_w):
     observations = []
     side = out.shape[2]
     side_sq = side * side
 
+    offset = 0
+    if side == 13:
+        offset = 2 * 6
+    if side == 26:
+        offset = 2 * 3
+    if side == 52:
+        offset = 2 * 0
+
     out_blob = out.flatten()
     for i in range(side_sq):
+        row = int(i / side)
+        col = int(i % side)
         for n in range(3):
             obj_index = EntryIndex(side, coords, classes, n * side * side + i,
                                    coords)
+            box_index = EntryIndex(side, coords, classes, n * side * side + i,
+                                   0)
             scale = out_blob[obj_index]
             if (scale < threshold):
                 continue
+            x = (col + out_blob[box_index + 0 * side_sq]) / side * 416
+            y = (row + out_blob[box_index + 1 * side]) / side * 416
+            height = math.exp(out_blob[box_index + 3 *
+                                       side_sq]) * anchors[offset + 2 * n + 1]
+            width = math.exp(
+                out_blob[box_index + 2 * side_sq]) * anchors[offset + 2 * n]
             for j in range(classes):
                 class_index = EntryIndex(side, coords, classes,
                                          n * side_sq + i, coords + 1 + j)
                 prob = scale * out_blob[class_index]
+
                 if prob < threshold:
                     continue
-                observation = DetectionObservation(j, prob)
+                observation = DetectionObservation(x, y, height, width, j,
+                                                   prob, (cap_h / 416),
+                                                   (cap_w / 416))
+
                 observations.append(observation)
 
     return observations
@@ -194,23 +224,24 @@ def infer_on_stream(args, client):
 
     cap = cv2.VideoCapture(args.input)
     cap.open(args.input)
-    cam_h = 768
-    cam_w = 432
-    new_w = int(cam_w * 416 / cam_w)
-    new_h = int(cam_h * 416 / cam_h)
+    cap_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    cap_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
     # get frame inforamtion
     fps = cap.get(cv2.CAP_PROP_FPS)
     frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     duration = frame_count / fps
-    print(duration)
 
     input_shape = infer_network.get_input_shape()
     width = input_shape[2]
     height = input_shape[3]
 
     frame_count = 0
+    people_count = 0
+    found_people = []
+    total_inference_time = []
     while cap.isOpened():
+        people_in_frame = 0
         frame_count += 1
         flag, frame = cap.read()
         curr_time = frame_count / fps
@@ -221,39 +252,80 @@ def infer_on_stream(args, client):
         p_frame = p_frame.transpose((2, 0, 1))
         p_frame = p_frame.reshape(1, *p_frame.shape)
 
+        inference_time = time.time()
         infer_network.exec_net(0, p_frame)
         if infer_network.wait() == 0:
+            observations = []
             outputs = infer_network.get_output()
-            #count = get_people_count(result, args.prob_threshold)
+            total_inference_time.append(time.time() - inference_time)
+            print(np.mean(total_inference_time))
+
             for result in outputs:
-                observations = parseYoloV3(result, prob_threshold)
+                observations = parseYoloV3(result, prob_threshold, cap_h,
+                                           cap_w)
+
+            for idx_x, obs_x in enumerate(observations):
+                if obs_x.confidence <= 0:
+                    continue
+                for idx_y, obs_y in enumerate(observations[idx_x + 1:]):
+                    intersection = IntersectionOverUnion(obs_x, obs_y)
+                    if intersection >= 0.4:
+                        observations[idx_y].confidence = 0
             for obs in observations:
-                print(obs.class_id)
-                print(obs.confidence)
-    ### TODO: Handle the input stream ###
+                people_in_frame += 1
+                label = labels[obs.class_id]
+                # Found person
+                if (obs.confidence > prob_threshold) & (label == "person"):
+                    found_person = True
+                    for idx, person in enumerate(found_people):
+                        # Check previously found people
+                        intersection = IntersectionOverUnion(obs, person)
+                        if intersection >= 0.3:
+                            obs.time_found = person.time_found
+                            obs.last_updated = curr_time
+                            found_people[idx] = obs
+                            found_person = False
+                            break
 
-    ### TODO: Loop until stream is over ###
+                    if found_person or len(found_people) == 0:
+                        obs.time_found = curr_time
+                        obs.last_updated = curr_time
+                        found_people.append(obs)
+                        people_count += 1
 
-    ### TODO: Read from the video capture ###
+            found_people = [
+                person for person in found_people
+                if curr_time - person.last_updated < 3
+            ]
 
-    ### TODO: Pre-process the image as needed ###
+            # Drawing boxes
+            for person in found_people:
+                label = person.class_id
+                confidence = person.confidence
+                if confidence > 0.2:
+                    label_text = labels[label] + " (" + "{:.1f}".format(
+                        confidence * 100) + "%)"
+                    cv2.rectangle(frame, (person.xmin, person.ymin),
+                                  (person.xmax, person.ymax), (125, 250, 0), 1)
+                    cv2.putText(frame, label_text,
+                                (person.xmin, person.ymin - 5),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255),
+                                1)
 
-    ### TODO: Start asynchronous inference for specified request ###
-
-    ### TODO: Wait for the result ###
-
-    ### TODO: Get the results of the inference request ###
-
-    ### TODO: Extract any desired stats from the results ###
-
-    ### TODO: Calculate and send relevant information on ###
-    ### current_count, total_count and duration to the MQTT server ###
-    ### Topic "person": keys of "count" and "total" ###
-    ### Topic "person/duration": key of "duration" ###
-
-    ### TODO: Send the frame to the FFMPEG server ###
-
-    ### TODO: Write an output image if `single_image_mode` ###
+            client.publish(
+                "person",
+                json.dumps({
+                    "count": len(found_people),
+                    "total": people_count
+                }))
+            for person in found_people:
+                t = curr_time - person.time_found
+                client.publish("person/duration", json.dumps({"duration": t}))
+            if flag:
+                sys.stdout.buffer.write(frame)
+                sys.stdout.flush()
+            if key_pressed == 27:
+                break
 
 
 def get_people_count(result, threshold):
