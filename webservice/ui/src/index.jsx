@@ -57,9 +57,9 @@ render(
   <Provider store={ store }>
     <ConnectedRouter history={ history }>
       <div className="intel-demo-container">
-        <Route component={ ConnectedNavigation } />
-        <ConnectedLog />
         <Route exact path="/" component={ Monitor } />
+        <ConnectedLog />
+        <Route component={ ConnectedNavigation } />
       </div>
     </ConnectedRouter>
   </Provider>,

@@ -17,6 +17,7 @@ class Stats extends React.Component {
     this.calculateDuration = this.calculateDuration.bind( this );
     this.state = {
       currentCount: 0,
+      totalCount: 0,
       currentFrameData: [],
       currentFrameLabels: [],
       durations: [],
@@ -55,6 +56,9 @@ class Stats extends React.Component {
     if ( input.count != undefined ) {
       newFrameData.push( input.count );
     }
+    if ( input.total != undefined ) {
+      newFrameData.push( input.count );
+    }
     if ( newFrameData.length > SETTINGS.MAX_POINTS ) {
       const sliceFrameData = newFrameData.slice( SETTINGS.SLICE_LENGTH );
       const sliceFrameLabels = newLabel.slice( SETTINGS.SLICE_LENGTH );
@@ -62,12 +66,12 @@ class Stats extends React.Component {
       newLabel = sliceFrameLabels;
     }
     this.setState( { currentCount: input.count,
+      totalCount: input.total,
       currentFrameLabels: newLabel,
       currentFrameData: newFrameData } );
   }
 
   calculateDuration( input ) {
-    print("test")
     const newDuration = this.state.durations;
     newDuration.push( input );
     const newAverage = this.state.durations.reduce( ( a, b ) => {
@@ -185,7 +189,7 @@ class Stats extends React.Component {
         </div>
         <div className={ `total-count-container ${ this.props.totalCountOn ? "" : "hide-count" }` }>
           <button className="counter-close" onClick={ this.props.toggleTotalCount }><FontAwesome name="toggle-right" size="2x" /></button>
-          <DataBox title="Total Counted" data={ this.state.durations.length } color="blue" />
+          <DataBox title="Total Counted" data={ this.state.totalCount } color="blue" />
         </div>
       </div>
     );
