@@ -47,7 +47,8 @@ class Network:
         self.plugin = IECore()
         model_bin = os.path.splitext(model_xml)[0] + ".bin"
 
-        self.network = IENetwork(model=model_xml, weights=model_bin)
+        self.network = self.plugin.read_network(model=model_xml,
+                                                weights=model_bin)
         if cpu_ext is not None:
             self.plugin.add_extension(cpu_ext, device)
         layers_map = self.plugin.query_network(network=self.network,
@@ -70,7 +71,6 @@ class Network:
         ### TODO: Return the shape of the input layer ###
         if self.network is not None:
             self.input_blob = next(iter(self.network.inputs))
-            self.output_blob = next(iter(self.network.outputs))
             input_shape = self.network.inputs[self.input_blob].shape
             return input_shape
         else:
@@ -82,7 +82,6 @@ class Network:
         if self.input_blob is None:
             print("Unable to make request as input not found.")
             exit(1)
-        print("id:{}".format(request_id))
         self.infer_request_handle = self.plugin_net.start_async(
             request_id, inputs={self.input_blob: frame})
         ### TODO: Return any necessary information ###
@@ -91,7 +90,6 @@ class Network:
 
     def wait(self):
         ### TODO: Wait for the request to be complete. ###
-        print("wait")
         infer_status = self.infer_request_handle.wait()
 
         ### TODO: Return any necessary information ###
@@ -100,6 +98,6 @@ class Network:
 
     def get_output(self):
         ### TODO: Extract and return the output results
-        result = self.infer_request_handle.outputs[self.output_blob]
+        result = self.infer_request_handle.outputs.values()
         ### Note: You may need to update the function parameters. ###
         return result

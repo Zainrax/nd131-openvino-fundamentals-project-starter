@@ -26,6 +26,8 @@ import socket
 import json
 import cv2
 
+import numpy as np
+
 import logging as log
 import paho.mqtt.client as mqtt
 
@@ -33,11 +35,92 @@ from argparse import ArgumentParser
 from inference import Network
 
 # MQTT server environment variables
-# HOSTNAME = socket.gethostname()
-# IPADDRESS = socket.gethostbyname(HOSTNAME)
-# MQTT_HOST = IPADDRESS
+HOSTNAME = "localhost"
+IPADDRESS = socket.gethostbyaddr(HOSTNAME)
+MQTT_HOST = "localhost"
 MQTT_PORT = 3001
 MQTT_KEEPALIVE_INTERVAL = 60
+
+labels = ("person", "bicycle", "car", "motorbike", "aeroplane", "bus", "train",
+          "truck", "boat", "traffic light", "fire hydrant", "stop sign",
+          "parking meter", "bench", "bird", "cat", "dog", "horse", "sheep",
+          "cow", "elephant", "bear", "zebra", "giraffe", "backpack",
+          "umbrella", "handbag", "tie", "suitcase", "frisbee", "skis",
+          "snowboard", "sports ball", "kite", "baseball bat", "baseball glove",
+          "skateboard", "surfboard", "tennis racket", "bottle", "wine glass",
+          "cup", "fork", "knife", "spoon", "bowl", "banana", "apple",
+          "sandwich", "orange", "broccoli", "carrot", "hot dog", "pizza",
+          "donut", "cake", "chair", "sofa", "pottedplant", "bed",
+          "diningtable", "toilet", "tvmonitor", "laptop", "mouse", "remote",
+          "keyboard", "cell phone", "microwave", "oven", "toaster", "sink",
+          "refrigerator", "book", "clock", "vase", "scissors", "teddy bear",
+          "hair drier", "toothbrush")
+
+classes = 80
+coords = 4
+
+
+def EntryIndex(side, lcoords, lclasses, location, entry):
+    n = int(location / (side * side))
+    loc = location % (side * side)
+    return int(n * side * side * (lcoords + lclasses + 1) +
+               entry * side * side + loc)
+
+
+def IntersectionOverUnion(box_1, box_2):
+    width_of_overlap_area = min(box_1.xmax, box_2.xmax) - max(
+        box_1.xmin, box_2.xmin)
+    height_of_overlap_area = min(box_1.ymax, box_2.ymax) - max(
+        box_1.ymin, box_2.ymin)
+    area_of_overlap = 0.0
+    if (width_of_overlap_area < 0.0 or height_of_overlap_area < 0.0):
+        area_of_overlap = 0.0
+    else:
+        area_of_overlap = width_of_overlap_area * height_of_overlap_area
+    box_1_area = (box_1.ymax - box_1.ymin) * (box_1.xmax - box_1.xmin)
+    box_2_area = (box_2.ymax - box_2.ymin) * (box_2.xmax - box_2.xmin)
+    area_of_union = box_1_area + box_2_area - area_of_overlap
+    retval = 0.0
+    if area_of_union <= 0.0:
+        retval = 0.0
+    else:
+        retval = (area_of_overlap / area_of_union)
+    return retval
+
+
+class DetectionObservation():
+    def __init__(self, x, y, h, w, class_id, confidence, h_scale, w_scale):
+        self.xmin = int((x - w / 2) * w_scale)
+        self.ymin = int((y - h / 2) * h_scale)
+        self.xmax = int(self.xmin + w * w_scale)
+        self.ymax = int(self.ymin + h * h_scale)
+        self.confidence = confidence
+        self.class_id = class_id
+
+
+def parseYoloV3(out, threshold):
+    observations = []
+    side = out.shape[2]
+    side_sq = side * side
+
+    out_blob = out.flatten()
+    for i in range(side_sq):
+        for n in range(3):
+            obj_index = EntryIndex(side, coords, classes, n * side * side + i,
+                                   coords)
+            scale = out_blob[obj_index]
+            if (scale < threshold):
+                continue
+            for j in range(classes):
+                class_index = EntryIndex(side, coords, classes,
+                                         n * side_sq + i, coords + 1 + j)
+                prob = scale * out_blob[class_index]
+                if prob < threshold:
+                    continue
+                observation = DetectionObservation(j, prob)
+                observations.append(observation)
+
+    return observations
 
 
 def build_argparser():
@@ -84,7 +167,8 @@ def build_argparser():
 
 def connect_mqtt():
     ### TODO: Connect to the MQTT client ###
-    client = None
+    client = mqtt.Client()
+    client.connect(MQTT_HOST, MQTT_PORT, MQTT_KEEPALIVE_INTERVAL)
 
     return client
 
@@ -107,15 +191,45 @@ def infer_on_stream(args, client):
     infer_network.load_model(model_xml=args.model,
                              cpu_ext=args.cpu_extension,
                              device=args.device)
-    frames = [0, 1, 2, 3]
+
+    cap = cv2.VideoCapture(args.input)
+    cap.open(args.input)
+    cam_h = 768
+    cam_w = 432
+    new_w = int(cam_w * 416 / cam_w)
+    new_h = int(cam_h * 416 / cam_h)
+
+    # get frame inforamtion
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    duration = frame_count / fps
+    print(duration)
+
     input_shape = infer_network.get_input_shape()
     width = input_shape[2]
     height = input_shape[3]
-    for frame in frames:
-        infer_network.exec_net(0, frame)
-        status = infer_network.wait()
-        result = infer_network.get_output()
-        print(result)
+
+    frame_count = 0
+    while cap.isOpened():
+        frame_count += 1
+        flag, frame = cap.read()
+        curr_time = frame_count / fps
+        if not flag:
+            break
+        key_pressed = cv2.waitKey(60)
+        p_frame = cv2.resize(frame, (width, height))
+        p_frame = p_frame.transpose((2, 0, 1))
+        p_frame = p_frame.reshape(1, *p_frame.shape)
+
+        infer_network.exec_net(0, p_frame)
+        if infer_network.wait() == 0:
+            outputs = infer_network.get_output()
+            #count = get_people_count(result, args.prob_threshold)
+            for result in outputs:
+                observations = parseYoloV3(result, prob_threshold)
+            for obs in observations:
+                print(obs.class_id)
+                print(obs.confidence)
     ### TODO: Handle the input stream ###
 
     ### TODO: Loop until stream is over ###
@@ -140,6 +254,19 @@ def infer_on_stream(args, client):
     ### TODO: Send the frame to the FFMPEG server ###
 
     ### TODO: Write an output image if `single_image_mode` ###
+
+
+def get_people_count(result, threshold):
+    count = 0
+    layer = result[0]
+
+    for detection in layer:
+        for idx, s in enumerate(detection):
+            if s[5] > threshold:
+                print("-{}-".format(idx))
+                print(s[5])
+
+    return count
 
 
 def main():
