@@ -42,21 +42,6 @@ MQTT_HOST = "localhost"
 MQTT_PORT = 3001
 MQTT_KEEPALIVE_INTERVAL = 60
 
-labels = ("person", "bicycle", "car", "motorbike", "aeroplane", "bus", "train",
-          "truck", "boat", "traffic light", "fire hydrant", "stop sign",
-          "parking meter", "bench", "bird", "cat", "dog", "horse", "sheep",
-          "cow", "elephant", "bear", "zebra", "giraffe", "backpack",
-          "umbrella", "handbag", "tie", "suitcase", "frisbee", "skis",
-          "snowboard", "sports ball", "kite", "baseball bat", "baseball glove",
-          "skateboard", "surfboard", "tennis racket", "bottle", "wine glass",
-          "cup", "fork", "knife", "spoon", "bowl", "banana", "apple",
-          "sandwich", "orange", "broccoli", "carrot", "hot dog", "pizza",
-          "donut", "cake", "chair", "sofa", "pottedplant", "bed",
-          "diningtable", "toilet", "tvmonitor", "laptop", "mouse", "remote",
-          "keyboard", "cell phone", "microwave", "oven", "toaster", "sink",
-          "refrigerator", "book", "clock", "vase", "scissors", "teddy bear",
-          "hair drier", "toothbrush")
-
 anchors = [
     10, 13, 16, 30, 33, 23, 30, 61, 62, 45, 59, 119, 116, 90, 156, 198, 373,
     326
@@ -70,12 +55,29 @@ class DetectionObservation():
     last_updated = 0.0
 
     def __init__(self, x, y, h, w, class_id, confidence, w_scale, h_scale):
+        self.confidence = confidence
+        self.class_id = class_id
         self.xmin = int((x - w / 2) * w_scale)
         self.ymin = int((y - h / 2) * h_scale)
         self.xmax = int(self.xmin + w * w_scale)
         self.ymax = int(self.ymin + h * h_scale)
-        self.confidence = confidence
-        self.class_id = class_id
+
+    def get_area(self):
+        area = (self.xmax - self.xmin) * (self.ymax - self.ymin)
+        return area
+
+    def calc_iou(self, rect):
+        min_X = min(self.xmax, rect.xmax)
+        max_X = max(self.xmin, rect.xmin)
+        min_Y = min(self.ymax, rect.ymax)
+        max_Y = min(self.xmax, rect.xmax)
+
+        area_of_intersection = abs((max_X - min_X) * (max_Y - min_Y))
+        if area_of_intersection == 0:
+            return 0
+        iou = area_of_intersection / float(rect.get_area() + self.get_area() -
+                                           area_of_intersection)
+        return iou
 
 
 def EntryIndex(side, lcoords, lclasses, location, entry):
@@ -119,6 +121,26 @@ def parseYoloV3(out, threshold, cap_h, cap_w):
     if side == 52:
         offset = 2 * 0
 
+    grid = out.transpose((0, 2, 3, 1))
+    for row in grid[0]:
+        for col in row:
+            # 3 is the number of bounding boxes
+            bounding_boxes = np.split(col, 3)
+            for box in bounding_boxes:
+                x = box[0]
+                y = box[1]
+                w = math.exp(box[2])
+                h = math.exp(box[3])
+                p = box[4]
+                if p < threshold:
+                    continue
+                print(h)
+                class_id = np.argmax(box[5:])
+                observation = DetectionObservation(x, y, h, w, class_id, p,
+                                                   (cap_h / 416),
+                                                   (cap_w / 416))
+                observations.append(observation)
+
     out_blob = out.flatten()
     for i in range(side_sq):
         row = int(i / side)
@@ -144,6 +166,7 @@ def parseYoloV3(out, threshold, cap_h, cap_w):
 
                 if prob < threshold:
                     continue
+                print(h)
                 observation = DetectionObservation(x, y, height, width, j,
                                                    prob, (cap_h / 416),
                                                    (cap_w / 416))
@@ -268,49 +291,43 @@ def infer_on_stream(args, client):
                 if obs_x.confidence <= 0:
                     continue
                 for idx_y, obs_y in enumerate(observations[idx_x + 1:]):
-                    intersection = IntersectionOverUnion(obs_x, obs_y)
+                    intersection = obs_x.calc_iou(obs_y)
                     if intersection >= 0.4:
                         observations[idx_y].confidence = 0
+
             for obs in observations:
                 people_in_frame += 1
-                label = labels[obs.class_id]
-                # Found person
-                if (obs.confidence > prob_threshold) & (label == "person"):
+                # class_id at 0 is Person
+                if (obs.confidence > prob_threshold) & (obs.class_id == 0):
                     found_person = True
                     for idx, person in enumerate(found_people):
                         # Check previously found people
-                        intersection = IntersectionOverUnion(obs, person)
+                        intersection = obs.calc_iou(person)
                         if intersection >= 0.3:
+                            # Found previous person, update position
                             obs.time_found = person.time_found
                             obs.last_updated = curr_time
                             found_people[idx] = obs
                             found_person = False
                             break
 
+                    # Add found person to list of activty observations
                     if found_person or len(found_people) == 0:
                         obs.time_found = curr_time
                         obs.last_updated = curr_time
                         found_people.append(obs)
                         people_count += 1
 
+            # Filter out people that have not been in the frame for 3 seconds
             found_people = [
                 person for person in found_people
                 if curr_time - person.last_updated < 3
             ]
 
-            # Drawing boxes
+            # Draw boxes
             for person in found_people:
-                label = person.class_id
-                confidence = person.confidence
-                if confidence > 0.2:
-                    label_text = labels[label] + " (" + "{:.1f}".format(
-                        confidence * 100) + "%)"
-                    cv2.rectangle(frame, (person.xmin, person.ymin),
-                                  (person.xmax, person.ymax), (125, 250, 0), 1)
-                    cv2.putText(frame, label_text,
-                                (person.xmin, person.ymin - 5),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255),
-                                1)
+                cv2.rectangle(frame, (person.xmin, person.ymin),
+                              (person.xmax, person.ymax), (125, 250, 0), 1)
 
             client.publish(
                 "person",
@@ -321,9 +338,9 @@ def infer_on_stream(args, client):
             for person in found_people:
                 t = curr_time - person.time_found
                 client.publish("person/duration", json.dumps({"duration": t}))
-            if flag:
-                sys.stdout.buffer.write(frame)
-                sys.stdout.flush()
+            #if flag:
+            #sys.stdout.buffer.write(frame)
+            #sys.stdout.flush()
             if key_pressed == 27:
                 break
 
