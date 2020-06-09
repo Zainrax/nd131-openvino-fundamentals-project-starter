@@ -47,7 +47,6 @@ anchors = [
     326
 ]
 classes = 80
-coords = 4
 
 
 class DetectionObservation():
@@ -70,7 +69,7 @@ class DetectionObservation():
         min_X = min(self.xmax, rect.xmax)
         max_X = max(self.xmin, rect.xmin)
         min_Y = min(self.ymax, rect.ymax)
-        max_Y = min(self.xmax, rect.xmax)
+        max_Y = max(self.ymin, rect.ymin)
 
         area_of_intersection = abs((max_X - min_X) * (max_Y - min_Y))
         if area_of_intersection == 0:
@@ -80,99 +79,36 @@ class DetectionObservation():
         return iou
 
 
-def EntryIndex(side, lcoords, lclasses, location, entry):
-    n = int(location / (side * side))
-    loc = location % (side * side)
-    return int(n * side * side * (lcoords + lclasses + 1) +
-               entry * side * side + loc)
-
-
-def IntersectionOverUnion(box_1, box_2):
-    width_of_overlap_area = min(box_1.xmax, box_2.xmax) - max(
-        box_1.xmin, box_2.xmin)
-    height_of_overlap_area = min(box_1.ymax, box_2.ymax) - max(
-        box_1.ymin, box_2.ymin)
-    area_of_overlap = 0.0
-    if (width_of_overlap_area < 0.0 or height_of_overlap_area < 0.0):
-        area_of_overlap = 0.0
-    else:
-        area_of_overlap = width_of_overlap_area * height_of_overlap_area
-    box_1_area = (box_1.ymax - box_1.ymin) * (box_1.xmax - box_1.xmin)
-    box_2_area = (box_2.ymax - box_2.ymin) * (box_2.xmax - box_2.xmin)
-    area_of_union = box_1_area + box_2_area - area_of_overlap
-    retval = 0.0
-    if area_of_union <= 0.0:
-        retval = 0.0
-    else:
-        retval = (area_of_overlap / area_of_union)
-    return retval
-
-
 def parseYoloV3(out, threshold, cap_h, cap_w):
     observations = []
-    side = out.shape[2]
-    side_sq = side * side
+    grid_side = out.shape[2]
 
     offset = 0
-    if side == 13:
+    if grid_side == 13:
         offset = 2 * 6
-    if side == 26:
+    if grid_side == 26:
         offset = 2 * 3
-    if side == 52:
+    if grid_side == 52:
         offset = 2 * 0
 
     grid = out.transpose((0, 2, 3, 1))
-    for row in grid[0]:
-        for col in row:
+    for row_idx, row in enumerate(grid[0]):
+        for col_idx, col in enumerate(row):
             # 3 is the number of bounding boxes
             bounding_boxes = np.split(col, 3)
-            for box in bounding_boxes:
-                x = box[0]
-                y = box[1]
-                w = math.exp(box[2])
-                h = math.exp(box[3])
+            for idx, box in enumerate(bounding_boxes):
+                x = (box[0] + col_idx) / grid_side * 416
+                y = (box[1] + row_idx) / grid_side * 416
+                w = math.exp(box[2]) * anchors[offset + 2 * idx]
+                h = math.exp(box[3]) * anchors[offset + 2 * idx + 1]
                 p = box[4]
                 if p < threshold:
                     continue
-                print(h)
                 class_id = np.argmax(box[5:])
                 observation = DetectionObservation(x, y, h, w, class_id, p,
                                                    (cap_h / 416),
                                                    (cap_w / 416))
                 observations.append(observation)
-
-    out_blob = out.flatten()
-    for i in range(side_sq):
-        row = int(i / side)
-        col = int(i % side)
-        for n in range(3):
-            obj_index = EntryIndex(side, coords, classes, n * side * side + i,
-                                   coords)
-            box_index = EntryIndex(side, coords, classes, n * side * side + i,
-                                   0)
-            scale = out_blob[obj_index]
-            if (scale < threshold):
-                continue
-            x = (col + out_blob[box_index + 0 * side_sq]) / side * 416
-            y = (row + out_blob[box_index + 1 * side]) / side * 416
-            height = math.exp(out_blob[box_index + 3 *
-                                       side_sq]) * anchors[offset + 2 * n + 1]
-            width = math.exp(
-                out_blob[box_index + 2 * side_sq]) * anchors[offset + 2 * n]
-            for j in range(classes):
-                class_index = EntryIndex(side, coords, classes,
-                                         n * side_sq + i, coords + 1 + j)
-                prob = scale * out_blob[class_index]
-
-                if prob < threshold:
-                    continue
-                print(h)
-                observation = DetectionObservation(x, y, height, width, j,
-                                                   prob, (cap_h / 416),
-                                                   (cap_w / 416))
-
-                observations.append(observation)
-
     return observations
 
 
@@ -253,7 +189,6 @@ def infer_on_stream(args, client):
     # get frame inforamtion
     fps = cap.get(cv2.CAP_PROP_FPS)
     frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    duration = frame_count / fps
 
     input_shape = infer_network.get_input_shape()
     width = input_shape[2]
@@ -281,7 +216,7 @@ def infer_on_stream(args, client):
             observations = []
             outputs = infer_network.get_output()
             total_inference_time.append(time.time() - inference_time)
-            print(np.mean(total_inference_time))
+            # print(np.mean(total_inference_time))
 
             for result in outputs:
                 observations = parseYoloV3(result, prob_threshold, cap_h,
@@ -326,6 +261,7 @@ def infer_on_stream(args, client):
 
             # Draw boxes
             for person in found_people:
+                print(len(found_people))
                 cv2.rectangle(frame, (person.xmin, person.ymin),
                               (person.xmax, person.ymax), (125, 250, 0), 1)
 
@@ -338,24 +274,13 @@ def infer_on_stream(args, client):
             for person in found_people:
                 t = curr_time - person.time_found
                 client.publish("person/duration", json.dumps({"duration": t}))
-            #if flag:
-            #sys.stdout.buffer.write(frame)
-            #sys.stdout.flush()
-            if key_pressed == 27:
-                break
-
-
-def get_people_count(result, threshold):
-    count = 0
-    layer = result[0]
-
-    for detection in layer:
-        for idx, s in enumerate(detection):
-            if s[5] > threshold:
-                print("-{}-".format(idx))
-                print(s[5])
-
-    return count
+        frame = cv2.resize(frame, (768, 432))
+        sys.stdout.buffer.write(frame)
+        sys.stdout.flush()
+        if key_pressed == 27:
+            break
+    cap.release()
+    cv2.destroyAllWindows()
 
 
 def main():
